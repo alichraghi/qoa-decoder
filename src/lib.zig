@@ -31,7 +31,7 @@ const dequant_table = [16][8]i32{
     .{ 1536, -1536, 5120, -5120, 9216, -9216, 14336, -14336 },
 };
 
-num_channels: u8,
+channels: u8,
 sample_rate: u24,
 samples: []i16,
 
@@ -54,7 +54,7 @@ pub fn decodeStream(allocator: std.mem.Allocator, reader: anytype) (DecodeError 
     const header = try Header.decode(reader);
     var frame_header = try FrameHeader.decode(reader);
 
-    const total_samples = header.samples * frame_header.num_channels;
+    const total_samples = header.samples * frame_header.channels;
     var samples = try allocator.alloc(i16, total_samples);
     errdefer allocator.free(samples);
 
@@ -65,7 +65,7 @@ pub fn decodeStream(allocator: std.mem.Allocator, reader: anytype) (DecodeError 
             reader,
             frame_header,
             &lms,
-            samples[decoded_samples * frame_header.num_channels ..],
+            samples[decoded_samples * frame_header.channels ..],
         );
 
         if (decoded_samples >= header.samples) break;
@@ -73,37 +73,37 @@ pub fn decodeStream(allocator: std.mem.Allocator, reader: anytype) (DecodeError 
     }
 
     return .{
-        .num_channels = frame_header.num_channels,
+        .channels = frame_header.channels,
         .sample_rate = frame_header.sample_rate,
         .samples = samples,
     };
 }
 
 pub const FrameHeader = struct {
-    num_channels: u8,
+    channels: u8,
     sample_rate: u24,
     samples: u16,
     size: u16,
 
     pub fn decode(reader: anytype) !FrameHeader {
-        const num_channels = try reader.readIntBig(u8);
+        const channels = try reader.readIntBig(u8);
         const sample_rate = try reader.readIntBig(u24);
         const samples = try reader.readIntBig(u16);
         const size = try reader.readIntBig(u16);
 
-        const data_size = size - frame_header_size - lms_len * 4 * num_channels;
+        const data_size = size - frame_header_size - lms_len * 4 * channels;
         const num_slices = data_size / 8;
         const max_total_samples = num_slices * max_slice_len;
 
-        if (num_channels == 0 or
-            num_channels > max_channels or
-            samples * num_channels > max_total_samples)
+        if (channels == 0 or
+            channels > max_channels or
+            samples * channels > max_total_samples)
         {
             return error.InvalidData;
         }
 
         return .{
-            .num_channels = num_channels,
+            .channels = channels,
             .sample_rate = sample_rate,
             .samples = samples,
             .size = size,
@@ -112,24 +112,24 @@ pub const FrameHeader = struct {
 };
 
 pub fn decodeFrame(reader: anytype, header: FrameHeader, lms: *[max_channels]LMS, sample_data: []i16) !u16 {
-    for (0..header.num_channels) |ch| {
+    for (0..header.channels) |ch| {
         try lms[ch].decode(reader);
     }
 
     var sample_index: u16 = 0;
     while (sample_index < header.samples) : (sample_index += max_slice_len) {
-        for (0..header.num_channels) |c| {
+        for (0..header.channels) |c| {
             var slice = try reader.readIntBig(u64);
             const scalefactor = (slice >> 60) & 0xf;
-            const slice_start = sample_index * header.num_channels + c;
-            const slice_end = std.math.min(sample_index + max_slice_len, header.samples) * header.num_channels + c;
+            const slice_start = sample_index * header.channels + c;
+            const slice_end = @min(sample_index + max_slice_len, header.samples) * header.channels + c;
 
             var si = slice_start;
-            while (si < slice_end) : (si += header.num_channels) {
+            while (si < slice_end) : (si += header.channels) {
                 const predicted = lms[c].predict();
                 const quantized = (slice >> 57) & 0x7;
                 const dequantized = dequant_table[scalefactor][quantized];
-                const reconstructed = @intCast(i16, std.math.clamp(predicted + dequantized, std.math.minInt(i16), std.math.maxInt(i16)));
+                const reconstructed: i16 = @intCast(std.math.clamp(predicted + dequantized, std.math.minInt(i16), std.math.maxInt(i16)));
 
                 sample_data[si] = reconstructed;
                 slice <<= 3;
@@ -197,8 +197,9 @@ pub const LMS = struct {
     }
 };
 
-test "encode/decode" {
-    const test_file = @embedFile("../examples/assets/childhood.qoa");
+test "decode" {
+    const test_file = @embedFile("../assets/childhood.qoa");
     const result = try decode(std.testing.allocator, test_file);
     defer std.testing.allocator.free(result.samples);
+    try std.fs.cwd().writeFile("zig-out/raw_audio.pcm", std.mem.sliceAsBytes(result.samples));
 }

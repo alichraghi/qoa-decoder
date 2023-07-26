@@ -1,9 +1,0 @@
-[submodule "libs/mach-sysaudio"]
-	path = libs/mach-sysaudio
-	url = https://github.com/hexops/mach-sysaudio
-[submodule "libs/mach-glfw"]
-	path = libs/mach-glfw
-	url = https://github.com/hexops/mach-glfw    
-[submodule "libs/mach-sysjs"]
-	path = libs/mach-sysjs
-	url = https://github.com/hexops/mach-sysjs
